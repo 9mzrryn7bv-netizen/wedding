@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>我們結婚了 | 蕭聖航 & 顧子暄</title>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Noto+Serif+TC:wght@300;400;600&family=Playfair+Display:ital,wght@0,400;0,600;1,400&display=swap');
+        
+        body { margin: 0; padding: 0; background-color: #FAEDF0; font-family: 'Noto Serif TC', serif; color: #5A434A; }
+        
+        .welcome-screen { position: fixed; top: 0; left: 0; width: 100%; height: 100%; background-color: #FAEDF0; display: flex; flex-direction: column; justify-content: center; align-items: center; z-index: 9999; transition: opacity 1s; }
+        .btn-open { background-color: #B76E79; color: white; border: none; padding: 15px 40px; font-size: 1.2rem; border-radius: 30px; cursor: pointer; font-family: 'Noto Serif TC', serif; letter-spacing: 2px; box-shadow: 0 4px 15px rgba(183, 110, 121, 0.3); transition: background-color 0.3s; }
+        .btn-open:hover { background-color: #9c5c66; }
+        
+        .container { max-width: 650px; margin: 0 auto; background-color: #FFFFFF; padding: 40px 30px; box-shadow: 0 0 20px rgba(0,0,0,0.05); text-align: center; }
+        
+        /* 照片鑲嵌與外框設計 */
+        .main-photo { width: 100%; height: auto; border: 12px solid #FAEDF0; border-radius: 4px; box-sizing: border-box; box-shadow: 0 6px 15px rgba(0,0,0,0.08); margin-bottom: 40px; }
+        
+        .title-en { font-family: 'Playfair Display', serif; font-style: italic; font-size: 2.8rem; color: #B76E79; margin-bottom: 10px; }
+        .title-zh { font-size: 1.5rem; letter-spacing: 6px; margin-bottom: 40px; color: #5A434A; }
+        
+        /* 新人姓名排版 */
+        .names { font-size: 2rem; margin-bottom: 40px; display: flex; justify-content: center; align-items: center; gap: 40px; }
+        .name-group { display: flex; flex-direction: column; align-items: center; }
+        .role-title { color: #B76E79; font-size: 1rem; margin-bottom: 8px; letter-spacing: 2px; }
+        
+        /* 主婚人排版修復：確保同一行顯示 */
+        .parents { display: flex; justify-content: center; gap: 60px; margin-bottom: 40px; }
+        .parent-group { display: flex; flex-direction: column; align-items: center; }
+        .parent-title { color: #B76E79; font-size: 1rem; margin-bottom: 10px; letter-spacing: 2px; }
+        .parent-name { font-size: 1.1rem; letter-spacing: 3px; white-space: nowrap; }
+        
+        .divider { width: 60px; height: 1px; background-color: #B76E79; margin: 40px auto; }
+        
+        /* 宴客資訊 */
+        .details { margin: 40px 0; line-height: 2.2; font-size: 1.1rem; }
+        .invitation-text { font-size: 1.3rem; color: #B76E79; margin-bottom: 20px; letter-spacing: 4px; }
+        .hotel-name { font-weight: 600; font-size: 1.2rem; margin-top: 15px; }
+        .hotel-address { font-size: 1rem; color: #7a6168; }
+        
+        /* 交通資訊區塊 */
+        .traffic-info { text-align: left; background-color: #FAEDF0; padding: 30px; border-radius: 8px; margin: 40px 0; font-size: 0.95rem; line-height: 1.8; color: #5A434A; }
+        .traffic-info h3 { color: #B76E79; text-align: center; margin-top: 0; letter-spacing: 2px; }
+        .traffic-info ul { padding-left: 20px; margin: 0; }
+        .traffic-info li { margin-bottom: 12px; }
+        
+        .map-container { width: 100%; height: 350px; border: none; border-radius: 8px; overflow: hidden; margin-bottom: 20px; }
+    </style>
+</head>
+<body>
+    <!-- 歡迎與音樂啟動畫面 -->
+    <div class="welcome-screen" id="welcome">
+        <h1 class="title-en" style="margin-bottom: 30px;">Harry & Judy</h1>
+        <button class="btn-open" onclick="openInvitation()">開啟喜帖</button>
+    </div>
+
+    <!-- 背景音樂：加入 autoplay 與 preload 以支援自動播放 -->
+    <audio id="bg-music" loop autoplay preload="auto">
+        <source src="https://assets.mixkit.co/music/preview/mixkit-wedding-march-canon-in-d-556.mp3" type="audio/mpeg">
+        <source src="https://upload.wikimedia.org/wikipedia/commons/e/ea/Pachelbel_-_Canon_in_D_Major.ogg" type="audio/ogg">
+    </audio>
+
+    <!-- 喜帖主要內容 -->
+    <div class="container" id="content" style="display: none;">
+        
+        <!-- 婚紗照鑲嵌更換為 IMG_0020_3.jpg -->
+        <img src="IMG_0020_3.jpg" alt="Harry & Judy Wedding Photo" class="main-photo">
+        
+        <div class="title-en">Just Married</div>
+        <div class="title-zh">我們結婚了</div>
+        
+        <div class="names">
+            <div class="name-group">
+                <span class="role-title">[ 新郎 ]</span>
+                <span>蕭聖航</span>
+            </div>
+            <div class="name-group">
+                <span class="role-title">[ 新娘 ]</span>
+                <span>顧子暄</span>
+            </div>
+        </div>
+
+        <div class="parents">
+            <div class="parent-group">
+                <span class="parent-title">[ 男方主婚人 ]</span>
+                <!-- 修復排版：使用 &nbsp; 保持空格並確保在同一行 -->
+                <span class="parent-name">蕭壹濟&nbsp;&nbsp;&nbsp;王文玲</span>
+            </div>
+            <div class="parent-group">
+                <span class="parent-title">[ 女方主婚人 ]</span>
+                <span class="parent-name">陳旭芳</span>
+            </div>
+        </div>
+
+        <div class="divider"></div>
+
+        <div class="details">
+            <div class="invitation-text">誠摯邀請</div>
+            <div>2026 年 12 月 27 日 (日)</div>
+            <div>入席時間 12:00</div>
+            <div>開席時間 12:30</div>
+            <div class="hotel-name">台北國泰萬怡酒店 2F 霖苑廳</div>
+            <div class="hotel-address">台北市中山區民生東路三段 6 號</div>
+        </div>
+
+        <!-- 補回交通資訊 -->
+        <div class="traffic-info">
+            <h3>交通資訊</h3>
+            <ul>
+                <li><strong>捷運：</strong>捷運橘線或中和新蘆線由行天宮站 2 號出口，步行約 5 分鐘。</li>
+                <li><strong>公車：</strong>公車站牌「合江街口」，可搭乘民生幹線、5、943、277、612、638、505、945、680。</li>
+                <li><strong>停車場：</strong>入口位於國泰萬怡酒店一樓大門對面，車輛請停放在 B3、B4 樓層。</li>
+            </ul>
+        </div>
+
+        <!-- Google Maps 嵌入 -->
+        <iframe class="map-container" src="https://www.google.com/maps/embed?pb=!1m18!1m12!1m3!1d3614.3411477726356!2d121.5372671!3d25.0594389!2m3!1f0!2f0!3f0!3m2!1i1024!2i768!4f13.1!3m3!1m2!1s0x3442a960a5e8c149%3A0xc48c1e40ebfb7466!2z5Y-w5YyX5ZyL5rOw6JCs5oCh6YWS5bqX!5e0!3m2!1szh-TW!2stw!4v1700000000000!5m2!1szh-TW!2stw" allowfullscreen="" loading="lazy"></iframe>
+    </div>
+
+    <script>
+        function openInvitation() {
+            const welcome = document.getElementById('welcome');
+            const content = document.getElementById('content');
+            const music = document.getElementById('bg-music');
+            
+            welcome.style.opacity = '0';
+            setTimeout(() => {
+                welcome.style.display = 'none';
+                content.style.display = 'block';
+                window.scrollTo(0, 0); 
+            }, 800);
+
+            // 強制觸發播放以防瀏覽器阻擋自動播放
+            music.volume = 0.6;
+            let playPromise = music.play();
+            
+            if (playPromise !== undefined) {
+                playPromise.catch(error => {
+                    console.log("需點擊互動才能播放音樂");
+                });
+            }
+        }
+    </script>
+</body>
+</html>
