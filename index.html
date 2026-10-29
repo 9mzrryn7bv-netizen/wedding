@@ -1,0 +1,898 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>婚禮座位安排工具</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- 引入 html2canvas 用於匯出圖片 -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+    <!-- 引入 SheetJS 用於匯出 Excel -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    <style>
+        body { font-family: 'Inter', 'Noto Sans TC', sans-serif; background-color: #fdf2f8; }
+        .draggable-item { cursor: grab; }
+        .draggable-item:active { cursor: grabbing; }
+        .drop-zone { transition: background-color 0.2s; }
+        .drop-zone.drag-over { background-color: #fce7f3; border-color: #ec4899; }
+        
+        /* Toast 提示框樣式 */
+        #toast-container {
+            position: fixed;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            z-index: 50;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+        .toast {
+            background-color: #333;
+            color: white;
+            padding: 10px 20px;
+            border-radius: 8px;
+            box-shadow: 0 4px 6px rgba(0,0,0,0.1);
+            opacity: 0;
+            transition: opacity 0.3s, transform 0.3s;
+            transform: translateY(20px);
+        }
+        .toast.show {
+            opacity: 1;
+            transform: translateY(0);
+        }
+    </style>
+</head>
+<body class="h-screen flex flex-col text-gray-800">
+
+    <!-- 頂部導航列 -->
+    <header class="bg-pink-600 text-white p-4 shadow-md flex justify-between items-center shrink-0">
+        <h1 class="text-2xl font-bold flex items-center gap-2">
+            💍 婚禮座位安排工具
+            <span id="sync-status" class="text-sm font-normal bg-pink-500 px-2 py-1 rounded-full text-pink-100">未連線</span>
+        </h1>
+        <div class="flex gap-3">
+            <button onclick="toggleSidebar()" id="sidebar-toggle-btn" class="bg-pink-800 hover:bg-pink-900 text-white px-3 py-2 rounded-lg transition shadow font-bold text-sm flex items-center gap-1">◀ 收合左側</button>
+            <button onclick="downloadBackup()" class="bg-indigo-500 hover:bg-indigo-600 text-white px-3 py-2 rounded-lg transition shadow font-semibold text-sm">📥 下載備份</button>
+            <button onclick="document.getElementById('backup-upload').click()" class="bg-indigo-500 hover:bg-indigo-600 text-white px-3 py-2 rounded-lg transition shadow font-semibold text-sm">📤 載入備份</button>
+            <input type="file" id="backup-upload" accept=".json" class="hidden" onchange="handleBackupUpload(event)">
+            
+            <button onclick="saveData()" class="bg-pink-700 hover:bg-pink-800 px-4 py-2 rounded-lg transition shadow">💾 儲存進度</button>
+            <button onclick="exportImage()" class="bg-white text-pink-600 hover:bg-gray-100 px-4 py-2 rounded-lg transition shadow font-semibold">🖼️ 匯出圖檔</button>
+            <button onclick="exportExcel()" class="bg-green-500 text-white hover:bg-green-600 px-4 py-2 rounded-lg transition shadow font-semibold">📊 匯出 Excel</button>
+        </div>
+    </header>
+
+    <!-- 主要內容區 -->
+    <main class="flex-1 flex overflow-hidden p-4 gap-2 relative">
+        
+        <!-- 左側：賓客管理與未安排區 -->
+        <div id="left-sidebar" style="width: 33%; min-width: 250px;" class="shrink-0 bg-white rounded-xl shadow-lg border border-pink-100 flex flex-col overflow-hidden">
+            <div class="p-4 bg-pink-50 border-b border-pink-100">
+                <div class="flex justify-between items-center cursor-pointer mb-3 select-none" onclick="toggleSection('add-guest-section', 'add-guest-icon')">
+                    <h2 class="text-lg font-bold text-pink-700">👥 新增賓客 / 群組</h2>
+                    <div id="add-guest-icon" class="text-pink-500 font-bold transform transition-transform duration-200">▼</div>
+                </div>
+                <div id="add-guest-section" class="block">
+                    <div class="flex gap-2 mb-2">
+                        <input type="text" id="guest-name" placeholder="賓客名稱 (例如: 男方大學同學)" class="flex-1 border rounded px-3 py-2 focus:outline-none focus:ring-2 focus:ring-pink-400">
+                        <input type="number" id="guest-size" placeholder="人數" class="w-20 border rounded px-3 py-2 focus:outline-none focus:ring-2 focus:ring-pink-400" min="1" value="1">
+                    </div>
+                    <button onclick="addGuest()" class="w-full bg-pink-500 hover:bg-pink-600 text-white font-semibold py-2 rounded transition">➕ 新增</button>
+                    
+                    <div class="mt-4 pt-4 border-t border-pink-200">
+                        <input type="file" id="excel-upload" accept=".xlsx, .xls, .csv" class="hidden" onchange="handleExcelUpload(event)">
+                        <button onclick="document.getElementById('excel-upload').click()" class="w-full bg-green-500 hover:bg-green-600 text-white font-semibold py-2 rounded transition shadow flex items-center justify-center gap-2">
+                            📁 匯入 Excel 名單
+                        </button>
+                        <p class="text-xs text-pink-600 mt-2 text-center">可直接選擇「婚禮出席調查 (回覆).xlsx」</p>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="p-4 border-b border-pink-100 bg-gray-50 flex justify-between items-center cursor-pointer hover:bg-gray-100 transition select-none" onclick="toggleSection('unassigned-guests', 'guest-list-icon', true)">
+                <div>
+                    <h3 class="font-bold text-gray-700 flex items-center gap-2">
+                        未安排座位的賓客
+                        <span id="unassigned-count-badge" class="bg-pink-100 text-pink-700 text-xs px-2 py-0.5 rounded-full font-bold shadow-sm">0</span>
+                    </h3>
+                    <p class="text-sm text-gray-500 mt-1">點擊可收合/展開，將卡片拖拉至右側</p>
+                </div>
+                <div id="guest-list-icon" class="text-gray-400 font-bold transform transition-transform duration-200">▼</div>
+            </div>
+            
+            <!-- 未安排賓客列表 (Drop Zone) -->
+            <div id="unassigned-guests" class="flex-1 overflow-y-auto p-4 space-y-3 drop-zone block" ondrop="drop(event, null)" ondragover="allowDrop(event)">
+                <!-- 賓客卡片將由 JS 渲染 -->
+            </div>
+        </div>
+
+        <!-- 拖拉分隔線 (Resizer) -->
+        <div id="resizer" class="w-2 cursor-col-resize hover:bg-pink-300 bg-pink-100 flex items-center justify-center rounded transition-colors shrink-0 z-20" title="拖拉調整寬度">
+            <div class="h-10 w-1 bg-pink-400 rounded-full"></div>
+        </div>
+
+        <!-- 右側：桌次與座位圖 -->
+        <div id="right-content" class="flex-1 bg-white rounded-xl shadow-lg border border-pink-100 flex flex-col overflow-hidden transition-all duration-300">
+            <div class="p-4 bg-pink-50 border-b border-pink-100 flex justify-between items-end">
+                <div>
+                    <h2 class="text-lg font-bold text-pink-700 mb-3">🍽️ 新增桌次</h2>
+                    <div class="flex gap-2">
+                        <input type="text" id="table-name" placeholder="桌次名稱 (例如: 預備桌)" class="w-48 border rounded px-3 py-2 focus:outline-none focus:ring-2 focus:ring-pink-400">
+                        <input type="number" id="table-capacity" placeholder="容納人數" class="w-24 border rounded px-3 py-2 focus:outline-none focus:ring-2 focus:ring-pink-400" min="1" value="10">
+                        <button onclick="addTable()" class="bg-pink-500 hover:bg-pink-600 text-white font-semibold px-4 py-2 rounded transition">➕ 新增桌次</button>
+                    </div>
+                </div>
+            </div>
+
+            <!-- 桌次顯示區 (匯出圖片的範圍) -->
+            <div id="tables-export-area" class="flex-1 overflow-auto bg-[#f8f9fa] border-t border-gray-200 relative">
+                <!-- 模擬場地真實比例，加入 id="export-content" 作為實際截圖目標，並把網格背景移到這層確保圖檔有背景 -->
+                <div id="export-content" class="w-max min-h-[800px] relative p-8 pl-0 flex gap-4" style="background-image: radial-gradient(#d1d5db 1px, transparent 1px); background-size: 20px 20px;">
+                    
+                    <!-- 舞台 (左側) -->
+                    <div class="w-32 bg-gray-400 border-l-[16px] border-green-700 flex flex-col items-center justify-center text-white shadow-xl z-20 relative my-12 rounded-r-lg" style="height: calc(100% - 96px);">
+                        <div class="text-4xl font-bold tracking-[0.5em] text-gray-100" style="writing-mode: vertical-rl;">舞台區</div>
+                        <!-- 香檳塔裝飾 -->
+                        <div class="absolute bottom-10 left-1/2 -translate-x-1/2 w-10 h-10 rounded-full bg-orange-200 border-4 border-orange-400 flex items-center justify-center text-xs text-orange-800 font-bold" title="香檳塔">塔</div>
+                    </div>
+                    
+                    <!-- 主要場地與桌次 -->
+                    <div class="relative z-10 flex flex-col py-6 pl-4">
+                        <!-- 紅毯 (貫穿中央，長度大約到第18桌後停止) -->
+                        <div class="absolute left-0 top-1/2 -translate-y-1/2 h-20 bg-red-700 shadow-inner z-0 border-y-2 border-red-800" style="width: calc(180px * 9);"></div>
+                        
+                        <!-- 桌次容器 (使用 CSS Grid 精確還原設計圖的 12 排 x 3 列配置) -->
+                        <div id="tables-container" style="display: grid; grid-template-columns: repeat(12, 175px); grid-template-rows: repeat(3, minmax(210px, auto)); gap: 1rem; position: relative; z-index: 10; align-items: center; justify-items: center;">
+                            <!-- 桌次將由 JS 渲染 -->
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+    </main>
+
+    <!-- 匯入異常處理 Modal -->
+    <div id="import-modal" class="fixed inset-0 bg-black/50 hidden z-50 flex items-center justify-center p-4">
+        <div class="bg-white rounded-xl shadow-2xl w-full max-w-2xl max-h-[80vh] flex flex-col">
+            <div class="p-4 border-b border-gray-200 flex justify-between items-center bg-red-50 rounded-t-xl">
+                <h3 class="text-lg font-bold text-red-700">⚠️ 部分資料無法自動辨識</h3>
+                <button onclick="closeImportModal()" class="text-gray-500 hover:text-red-500 font-bold text-xl leading-none">✖</button>
+            </div>
+            <div class="p-4 bg-yellow-50 text-sm text-yellow-800 border-b border-yellow-200 leading-relaxed">
+                下列 Excel 資料缺乏明確的「姓名」欄位，或是格式特殊無法自動判讀。<br>請參考灰色框內的原始資料，在下方<strong>手動輸入姓名與人數</strong>並點擊「加入」，或是直接點擊「完成並關閉」忽略這些資料。
+            </div>
+            <div class="p-4 overflow-y-auto flex-1 bg-gray-50 shadow-inner" id="unrecognized-list">
+                <!-- JS 產生的未辨識項目 -->
+            </div>
+            <div class="p-4 border-t border-gray-200 flex justify-end bg-white rounded-b-xl">
+                <button onclick="closeImportModal()" class="bg-gray-500 hover:bg-gray-600 text-white px-6 py-2 rounded transition font-bold shadow">完成並關閉</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Toast 提示容器 -->
+    <div id="toast-container"></div>
+
+    <!-- Firebase 與應用程式邏輯 -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, doc, getDoc, setDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        // 依照場地圖完美還原預設桌次與絕對網格座標 (連續桌號不跳過，保留20桌在中間)
+        const defaultTables = [
+            { id: 'table_main', name: '主桌', capacity: 12, row: 2, col: 1 },
+            { id: 'table_2', name: '第 2 桌', capacity: 10, row: 1, col: 2 },
+            { id: 'table_3', name: '第 3 桌', capacity: 10, row: 3, col: 2 },
+            { id: 'table_4', name: '第 4 桌', capacity: 10, row: 1, col: 3 },
+            { id: 'table_5', name: '第 5 桌', capacity: 10, row: 3, col: 3 },
+            { id: 'table_6', name: '第 6 桌', capacity: 10, row: 1, col: 4 },
+            { id: 'table_7', name: '第 7 桌', capacity: 10, row: 3, col: 4 },
+            { id: 'table_8', name: '第 8 桌', capacity: 10, row: 1, col: 5 },
+            { id: 'table_9', name: '第 9 桌', capacity: 10, row: 3, col: 5 },
+            { id: 'table_10', name: '第 10 桌', capacity: 10, row: 1, col: 6 },
+            { id: 'table_11', name: '第 11 桌', capacity: 10, row: 3, col: 6 },
+            { id: 'table_12', name: '第 12 桌', capacity: 10, row: 1, col: 7 },
+            { id: 'table_13', name: '第 13 桌', capacity: 10, row: 3, col: 7 },
+            { id: 'table_14', name: '第 14 桌', capacity: 10, row: 1, col: 8 },
+            { id: 'table_15', name: '第 15 桌', capacity: 10, row: 3, col: 8 },
+            { id: 'table_16', name: '第 16 桌', capacity: 10, row: 1, col: 9 },
+            { id: 'table_17', name: '第 17 桌', capacity: 10, row: 3, col: 9 },
+            { id: 'table_18', name: '第 18 桌', capacity: 10, row: 1, col: 10 },
+            { id: 'table_19', name: '第 19 桌', capacity: 10, row: 3, col: 10 },
+            { id: 'table_20', name: '第 20 桌', capacity: 10, row: 2, col: 11 },
+            { id: 'table_21', name: '第 21 桌', capacity: 10, row: 3, col: 11 }
+        ];
+
+        // 全域應用狀態
+        window.appState = {
+            guests: [],
+            tables: defaultTables
+        };
+
+        // 環境變數安全存取
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-wedding-app';
+        let db, auth, userId = null;
+
+        // Toast 提示功能 (取代 alert)
+        window.showToast = function(message) {
+            const container = document.getElementById('toast-container');
+            const toast = document.createElement('div');
+            toast.className = 'toast';
+            toast.textContent = message;
+            container.appendChild(toast);
+            
+            // Trigger animation
+            setTimeout(() => toast.classList.add('show'), 10);
+            
+            setTimeout(() => {
+                toast.classList.remove('show');
+                setTimeout(() => toast.remove(), 300);
+            }, 3000);
+        };
+
+        // 初始化 Firebase 與載入資料
+        async function initApp() {
+            try {
+                if (typeof __firebase_config === 'undefined') {
+                    console.warn("未偵測到 Firebase Config，將以本地記憶體模式運行（重新整理後資料會消失）。");
+                    document.getElementById('sync-status').textContent = '未連線 (僅本地)';
+                    renderAll();
+                    return;
+                }
+
+                const firebaseConfig = JSON.parse(__firebase_config);
+                const app = initializeApp(firebaseConfig);
+                auth = getAuth(app);
+                db = getFirestore(app);
+
+                document.getElementById('sync-status').textContent = '連線中...';
+
+                // 驗證登入
+                if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+                    await signInWithCustomToken(auth, __initial_auth_token);
+                } else {
+                    await signInAnonymously(auth);
+                }
+                
+                userId = auth.currentUser?.uid;
+                if(userId) {
+                    document.getElementById('sync-status').textContent = '已連線 🟢';
+                    await loadData();
+                }
+
+            } catch (error) {
+                console.error("Firebase 初始化失敗:", error);
+                document.getElementById('sync-status').textContent = '連線失敗 🔴';
+                showToast("連線至伺服器失敗，將在本地暫存。");
+                renderAll();
+            }
+        }
+
+        // 載入資料庫資料 (僅一筆 Doc 來儲存整個排位狀態)
+        async function loadData() {
+            if (!userId || !db) return;
+            try {
+                const docRef = doc(db, 'artifacts', appId, 'users', userId, 'wedding_plan');
+                const snap = await getDoc(docRef);
+                if (snap.exists()) {
+                    const data = snap.data();
+                    window.appState.guests = data.guests || [];
+                    // 只有當雲端有存桌次時才覆蓋，否則保留預設的 21 桌
+                    if (data.tables && data.tables.length > 0) {
+                        window.appState.tables = data.tables;
+                    }
+                    showToast("已載入儲存的排定進度！");
+                }
+                renderAll();
+            } catch (error) {
+                console.error("讀取資料失敗:", error);
+                showToast("讀取資料失敗！");
+                renderAll();
+            }
+        }
+
+        // 儲存資料到資料庫
+        window.saveData = async function() {
+            if (!userId || !db) {
+                showToast("無法儲存，未連線到資料庫！");
+                return;
+            }
+            try {
+                document.getElementById('sync-status').textContent = '儲存中...';
+                const docRef = doc(db, 'artifacts', appId, 'users', userId, 'wedding_plan');
+                // 確保乾淨的純物件陣列存入
+                const guestsData = window.appState.guests.map(g => ({...g}));
+                const tablesData = window.appState.tables.map(t => ({...t}));
+                
+                await setDoc(docRef, { guests: guestsData, tables: tablesData });
+                document.getElementById('sync-status').textContent = '已連線 🟢';
+                showToast("進度已儲存！");
+            } catch (error) {
+                console.error("儲存失敗:", error);
+                document.getElementById('sync-status').textContent = '儲存失敗 🔴';
+                showToast("儲存失敗，請重試。");
+            }
+        };
+
+        // ===== 本地備份與載入功能 =====
+        window.downloadBackup = function() {
+            const dataStr = "data:text/json;charset=utf-8," + encodeURIComponent(JSON.stringify(window.appState));
+            const downloadAnchorNode = document.createElement('a');
+            downloadAnchorNode.setAttribute("href", dataStr);
+            downloadAnchorNode.setAttribute("download", "婚禮排位備份.json");
+            document.body.appendChild(downloadAnchorNode); // Firefox 需要先 append
+            downloadAnchorNode.click();
+            downloadAnchorNode.remove();
+            showToast("📥 備份檔已下載至您的電腦！");
+        };
+
+        window.handleBackupUpload = function(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                try {
+                    const importedState = JSON.parse(e.target.result);
+                    if (importedState.guests && importedState.tables) {
+                        window.appState = importedState;
+                        renderAll();
+                        saveData(); // 載入後自動同步到雲端
+                        showToast("📤 備份載入成功！進度已恢復。");
+                    } else {
+                        showToast("⚠️ 備份檔格式不正確！");
+                    }
+                } catch (err) {
+                    console.error("讀取備份失敗:", err);
+                    showToast("⚠️ 讀取備份檔失敗！");
+                }
+            };
+            reader.readAsText(file);
+            event.target.value = ''; // 清除 input 以便重複上傳同一個檔案
+        };
+
+        // ===== 核心邏輯與渲染 =====
+
+        function generateId() {
+            return Math.random().toString(36).substr(2, 9);
+        }
+
+        window.addGuest = function() {
+            const nameInput = document.getElementById('guest-name');
+            const sizeInput = document.getElementById('guest-size');
+            const name = nameInput.value.trim();
+            const size = parseInt(sizeInput.value);
+
+            if (!name) {
+                showToast("請輸入賓客/群組名稱！");
+                return;
+            }
+            if (isNaN(size) || size < 1) {
+                showToast("人數必須至少為 1 人！");
+                return;
+            }
+
+            window.appState.guests.push({
+                id: 'guest_' + generateId(),
+                name: name,
+                size: size,
+                tableId: null // 初始未安排桌次
+            });
+
+            nameInput.value = '';
+            sizeInput.value = '1';
+            renderAll();
+        };
+
+        window.deleteGuest = function(guestId) {
+            window.appState.guests = window.appState.guests.filter(g => g.id !== guestId);
+            renderAll();
+        };
+
+        // ===== 匯入 Excel 功能 =====
+        window.handleExcelUpload = function(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+
+            showToast("正在解析 Excel 檔案...");
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                try {
+                    const data = new Uint8Array(e.target.result);
+                    const workbook = XLSX.read(data, {type: 'array'});
+                    const firstSheetName = workbook.SheetNames[0];
+                    const worksheet = workbook.Sheets[firstSheetName];
+                    
+                    // 將 Sheet 轉為 JSON 物件陣列
+                    const json = XLSX.utils.sheet_to_json(worksheet);
+                    let importCount = 0;
+                    let unrecognizedRows = [];
+                    
+                    json.forEach(row => {
+                        // 過濾掉完全空白的列
+                        const isEmpty = Object.values(row).every(v => v === null || v === undefined || String(v).trim() === '');
+                        if (isEmpty) return;
+
+                        // 智慧辨識欄位名稱 (根據台灣常見表單問法)
+                        const keys = Object.keys(row);
+                        const nameKey = keys.find(k => k.includes('姓名') || k.includes('名字') || k.includes('稱呼') || k.includes('Name'));
+                        const sizeKey = keys.find(k => k.includes('人數') || k.includes('幾位') || k.includes('攜伴') || k.includes('出席人數'));
+                        const attendKey = keys.find(k => k.includes('參加') || k.includes('出席意願') || k.includes('是否出席'));
+                        
+                        // 如果有出席意願欄位，且內容包含「不」或「無法」，則跳過此人
+                        if (attendKey) {
+                            const attendStr = String(row[attendKey]);
+                            if (attendStr.includes('不') || attendStr.includes('無法')) {
+                                return; // 跳過不參加的賓客
+                            }
+                        }
+
+                        // 若找不到對應欄位，預設抓第一個字串當名字
+                        let name = nameKey ? row[nameKey] : Object.values(row).find(v => typeof v === 'string' && v.trim() !== '');
+                        let sizeStr = sizeKey ? String(row[sizeKey]) : '1';
+                        
+                        // 從字串中提取數字 (例如 "2位" -> 2)
+                        let size = parseInt(sizeStr.replace(/[^0-9]/g, ''));
+                        if (isNaN(size) || size < 1) size = 1;
+
+                        if (name && String(name).trim() !== '') {
+                            window.appState.guests.push({
+                                id: 'guest_' + generateId(),
+                                name: String(name).trim(),
+                                size: size,
+                                tableId: null // 匯入後都在未安排區
+                            });
+                            importCount++;
+                        } else {
+                            // 找不到姓名，記錄為未辨識列
+                            unrecognizedRows.push(row);
+                        }
+                    });
+                    
+                    if (importCount > 0) {
+                        showToast(`成功匯入 ${importCount} 筆賓客資料！`);
+                        renderAll();
+                        saveData(); // 自動儲存
+                    } else if (unrecognizedRows.length === 0) {
+                        showToast("未找到任何有效賓客資料，請確認欄位是否包含「姓名」。");
+                    }
+
+                    // 觸發異常處理 Modal
+                    if (unrecognizedRows.length > 0) {
+                        showUnrecognizedModal(unrecognizedRows);
+                    }
+                } catch (error) {
+                    console.error("解析 Excel 失敗:", error);
+                    showToast("檔案解析失敗，請確認是否為正確的 Excel 格式。");
+                }
+            };
+            reader.readAsArrayBuffer(file);
+            // 清除 input value 以便重複上傳同一個檔案
+            event.target.value = '';
+        };
+
+        window.showUnrecognizedModal = function(rows) {
+            const list = document.getElementById('unrecognized-list');
+            list.innerHTML = '';
+            rows.forEach((row, idx) => {
+                // 將物件轉為可讀字串，過濾掉太長或無用的資訊
+                let rawTextItems = [];
+                for(let key in row) {
+                    if(row[key] !== undefined && row[key] !== '') {
+                         rawTextItems.push(`${key}: ${row[key]}`);
+                    }
+                }
+                const rawText = rawTextItems.join(' | ');
+
+                const itemHTML = `
+                    <div class="bg-white p-3 mb-3 border border-red-200 rounded shadow-sm flex flex-col gap-2" id="unrecognized-row-${idx}">
+                        <div class="text-xs text-gray-600 font-mono bg-gray-100 p-2 rounded break-all leading-relaxed">
+                            <span class="font-bold text-gray-800">原始資料:</span> ${escapeHTML(rawText) || '（無內容）'}
+                        </div>
+                        <div class="flex gap-2 items-center mt-1">
+                            <input type="text" id="manual-name-${idx}" placeholder="手動輸入姓名" class="flex-1 border border-gray-300 rounded px-2 py-1 text-sm focus:ring-2 focus:ring-pink-400 focus:outline-none">
+                            <input type="number" id="manual-size-${idx}" placeholder="人數" value="1" min="1" class="w-20 border border-gray-300 rounded px-2 py-1 text-sm focus:ring-2 focus:ring-pink-400 focus:outline-none">
+                            <button onclick="resolveUnrecognized(${idx})" class="bg-green-500 text-white px-4 py-1 rounded text-sm hover:bg-green-600 transition font-bold shadow whitespace-nowrap">加入名單</button>
+                        </div>
+                    </div>
+                `;
+                list.innerHTML += itemHTML;
+            });
+            document.getElementById('import-modal').classList.remove('hidden');
+        };
+
+        window.closeImportModal = function() {
+            document.getElementById('import-modal').classList.add('hidden');
+            renderAll();
+            saveData();
+        };
+
+        window.resolveUnrecognized = function(idx) {
+            const nameInput = document.getElementById(`manual-name-${idx}`);
+            const sizeInput = document.getElementById(`manual-size-${idx}`);
+            const name = nameInput.value.trim();
+            const size = parseInt(sizeInput.value);
+
+            if(!name) {
+                showToast("請輸入姓名！"); 
+                return;
+            }
+
+            window.appState.guests.push({
+                id: 'guest_' + generateId(),
+                name: name,
+                size: isNaN(size) || size < 1 ? 1 : size,
+                tableId: null
+            });
+
+            // 移除該列 UI
+            const rowElem = document.getElementById(`unrecognized-row-${idx}`);
+            if(rowElem) rowElem.remove();
+            
+            showToast(`已手動加入: ${name}`);
+            
+            // 如果全部清空了，自動關閉
+            const list = document.getElementById('unrecognized-list');
+            if (list.children.length === 0) {
+                closeImportModal();
+            }
+        };
+
+        window.addTable = function() {
+            const nameInput = document.getElementById('table-name');
+            const capInput = document.getElementById('table-capacity');
+            const name = nameInput.value.trim();
+            const capacity = parseInt(capInput.value);
+
+            if (!name) {
+                showToast("請輸入桌次名稱！");
+                return;
+            }
+            if (isNaN(capacity) || capacity < 1) {
+                showToast("桌次容量必須至少為 1 人！");
+                return;
+            }
+
+            window.appState.tables.push({
+                id: 'table_' + generateId(),
+                name: name,
+                capacity: capacity
+            });
+
+            nameInput.value = '';
+            renderAll();
+        };
+
+        window.deleteTable = function(tableId) {
+            // 將原本在這桌的賓客移回未安排區
+            window.appState.guests.forEach(g => {
+                if (g.tableId === tableId) {
+                    g.tableId = null;
+                }
+            });
+            // 刪除桌次
+            window.appState.tables = window.appState.tables.filter(t => t.id !== tableId);
+            renderAll();
+        };
+
+        // ===== 介面收合控制與拖拉寬度 =====
+        
+        let isResizing = false;
+        let lastSidebarWidth = '33%';
+
+        window.toggleSidebar = function() {
+            const sidebar = document.getElementById('left-sidebar');
+            const resizer = document.getElementById('resizer');
+            const btn = document.getElementById('sidebar-toggle-btn');
+            
+            if (sidebar.style.display === 'none') {
+                sidebar.style.display = 'flex';
+                resizer.style.display = 'flex';
+                btn.innerHTML = '◀ 收合左側';
+                sidebar.style.width = lastSidebarWidth;
+            } else {
+                lastSidebarWidth = sidebar.style.width || (sidebar.offsetWidth + 'px');
+                sidebar.style.display = 'none';
+                resizer.style.display = 'none';
+                btn.innerHTML = '▶ 展開名單';
+            }
+        };
+
+        window.toggleSection = function(sectionId, iconId, isFlexItem = false) {
+            const section = document.getElementById(sectionId);
+            const icon = document.getElementById(iconId);
+            
+            if (section.classList.contains('hidden')) {
+                section.classList.remove('hidden');
+                if (isFlexItem) section.classList.add('flex-1', 'block');
+                icon.style.transform = 'rotate(0deg)';
+            } else {
+                if (isFlexItem) section.classList.remove('flex-1', 'block');
+                section.classList.add('hidden');
+                icon.style.transform = 'rotate(-90deg)';
+            }
+        };
+
+        // ===== 拖拉事件處理 =====
+        
+        window.dragStart = function(event, guestId) {
+            event.dataTransfer.setData('text/plain', guestId);
+            event.target.style.opacity = '0.5';
+        };
+
+        window.dragEnd = function(event) {
+            event.target.style.opacity = '1';
+        };
+
+        window.allowDrop = function(event) {
+            event.preventDefault();
+            // 添加視覺回饋
+            if(event.currentTarget.classList.contains('drop-zone')) {
+                event.currentTarget.classList.add('drag-over');
+            }
+        };
+
+        window.dragLeave = function(event) {
+            if(event.currentTarget.classList.contains('drop-zone')) {
+                event.currentTarget.classList.remove('drag-over');
+            }
+        };
+
+        window.drop = function(event, targetTableId) {
+            event.preventDefault();
+            if(event.currentTarget.classList.contains('drop-zone')) {
+                event.currentTarget.classList.remove('drag-over');
+            }
+
+            const guestId = event.dataTransfer.getData('text/plain');
+            if(!guestId) return;
+
+            const guest = window.appState.guests.find(g => g.id === guestId);
+            if (!guest) return;
+
+            // 如果目標是桌子，檢查容量
+            if (targetTableId !== null) {
+                const table = window.appState.tables.find(t => t.id === targetTableId);
+                if (table) {
+                    const currentGuests = window.appState.guests.filter(g => g.tableId === targetTableId && g.id !== guestId);
+                    const currentCount = currentGuests.reduce((sum, g) => sum + g.size, 0);
+                    if (currentCount + guest.size > table.capacity) {
+                        showToast(`注意：超過 ${table.name} 容納人數！`);
+                        // 雖然警告，但我們還是允許放置（排位實務上有時會擠一下）
+                    }
+                }
+            }
+
+            // 更新賓客所屬的桌子
+            guest.tableId = targetTableId;
+            renderAll();
+        };
+
+        // ===== 渲染 UI =====
+
+        function escapeHTML(str) {
+            const div = document.createElement('div');
+            div.textContent = str;
+            return div.innerHTML;
+        }
+
+        function createGuestCard(guest) {
+            return `
+                <div class="draggable-item bg-white border border-gray-200 rounded p-1 mb-1 shadow-sm flex justify-between items-center text-xs hover:border-pink-300" 
+                     draggable="true" 
+                     ondragstart="dragStart(event, '${guest.id}')"
+                     ondragend="dragEnd(event)">
+                    <div class="truncate pr-1 font-medium text-gray-700" title="${escapeHTML(guest.name)}">${escapeHTML(guest.name)}</div>
+                    <div class="flex items-center gap-1 shrink-0">
+                        <span class="text-pink-600 bg-pink-50 px-1 rounded">👤${guest.size}</span>
+                        <button onclick="deleteGuest('${guest.id}')" class="text-gray-400 hover:text-red-500 font-bold ml-1" title="刪除">✖</button>
+                    </div>
+                </div>
+            `;
+        }
+
+        function renderAll() {
+            // 渲染未安排賓客
+            const unassignedContainer = document.getElementById('unassigned-guests');
+            const unassignedGuests = window.appState.guests.filter(g => g.tableId === null);
+            
+            // 更新未安排人數 Badge
+            const badge = document.getElementById('unassigned-count-badge');
+            if (badge) {
+                badge.textContent = unassignedGuests.length;
+            }
+            
+            if (unassignedGuests.length === 0) {
+                unassignedContainer.innerHTML = `<div class="text-center text-gray-400 py-8">目前沒有未安排的賓客</div>`;
+            } else {
+                unassignedContainer.innerHTML = unassignedGuests.map(g => createGuestCard(g)).join('');
+            }
+
+            // 渲染桌次
+            const tablesContainer = document.getElementById('tables-container');
+            if (window.appState.tables.length === 0) {
+                tablesContainer.innerHTML = `<div class="col-span-full text-center text-gray-500 bg-white/80 p-4 rounded-lg shadow mt-10">請先在上方新增桌次 (例如: 主桌、第1桌)</div>`;
+                return;
+            }
+
+            let tablesHTML = '';
+            window.appState.tables.forEach(table => {
+                const tableGuests = window.appState.guests.filter(g => g.tableId === table.id);
+                const currentCount = tableGuests.reduce((sum, g) => sum + g.size, 0);
+                const isOverCapacity = currentCount > table.capacity;
+                const countColorClass = isOverCapacity ? 'text-red-600 font-bold' : 'text-gray-500';
+
+                // 判斷是否為主桌 (主桌外觀可稍微不同)
+                const isMainTable = table.name.includes('主桌');
+                const tableBorderColor = isMainTable ? 'border-yellow-400 bg-yellow-50' : 'border-gray-300 bg-white';
+                
+                // 套用特定網格位置 (如果有設定的話)
+                const gridStyle = (table.row && table.col) ? `grid-area: ${table.row} / ${table.col};` : '';
+
+                tablesHTML += `
+                    <div class="flex flex-col items-center gap-2 w-44" style="${gridStyle}">
+                        <!-- 圓桌視覺 -->
+                        <div class="w-32 h-32 ${tableBorderColor} border-[6px] rounded-full shadow-md flex flex-col items-center justify-center drop-zone relative z-10 transition-transform hover:scale-105"
+                             ondrop="drop(event, '${table.id}')" 
+                             ondragover="allowDrop(event)"
+                             ondragleave="dragLeave(event)">
+                            <h3 class="font-bold text-gray-800 text-center w-full truncate px-3 text-sm">${escapeHTML(table.name)}</h3>
+                            <div class="text-[11px] ${countColorClass} font-semibold mt-1">${currentCount} / ${table.capacity} 人</div>
+                            <button onclick="deleteTable('${table.id}')" class="absolute -top-1 -right-1 text-gray-400 hover:text-red-500 bg-white rounded-full w-6 h-6 flex items-center justify-center shadow border border-gray-200 text-xs" title="刪除此桌">✖</button>
+                        </div>
+                        
+                        <!-- 該桌賓客名單 (懸掛於圓桌下方) -->
+                        <div class="w-full bg-white/95 border border-gray-200 rounded-md shadow-sm p-1.5 h-36 overflow-y-auto drop-zone"
+                             ondrop="drop(event, '${table.id}')" 
+                             ondragover="allowDrop(event)"
+                             ondragleave="dragLeave(event)">
+                            ${tableGuests.map(g => createGuestCard(g)).join('')}
+                            ${tableGuests.length === 0 ? `<div class="text-center text-gray-400 text-xs py-4">空桌<br>請將賓客拖至此處</div>` : ''}
+                        </div>
+                    </div>
+                `;
+            });
+            tablesContainer.innerHTML = tablesHTML;
+        }
+
+        // ===== 匯出功能 =====
+
+        window.exportImage = async function() {
+            showToast("正在生成圖片，請稍候...");
+            // 改抓內層真實撐開寬高的容器
+            const exportArea = document.getElementById('export-content'); 
+            try {
+                const canvas = await html2canvas(exportArea, {
+                    backgroundColor: '#f9fafb', // 背景給點淺灰確保不是透明的
+                    scale: 2, // 提高解析度
+                    width: exportArea.scrollWidth, // 強制讀取完整寬度
+                    height: exportArea.scrollHeight, // 強制讀取完整高度
+                    scrollX: 0,
+                    scrollY: 0
+                });
+                const url = canvas.toDataURL('image/png');
+                const a = document.createElement('a');
+                a.href = url;
+                a.download = '婚禮座位圖.png';
+                a.click();
+                showToast("圖片下載成功！");
+            } catch (error) {
+                console.error("匯出圖片失敗:", error);
+                showToast("匯出圖片失敗！");
+            }
+        };
+
+        window.exportExcel = function() {
+            try {
+                // 準備 Excel 資料陣列 (2D array)
+                const data = [
+                    ['婚宴座位表 & 桌卡明細'], // 大標題
+                    [], // 空行
+                    ['桌次名稱', '預定容量', '實際人數', '賓客 / 群組名稱', '人數', '備註']
+                ];
+                
+                let totalGuests = 0;
+
+                window.appState.tables.forEach(table => {
+                    const tableGuests = window.appState.guests.filter(g => g.tableId === table.id);
+                    const currentCount = tableGuests.reduce((sum, g) => sum + g.size, 0);
+                    totalGuests += currentCount;
+                    
+                    if (tableGuests.length === 0) {
+                        data.push([table.name, table.capacity, currentCount, '(空桌)', 0, '']);
+                    } else {
+                        tableGuests.forEach((g, index) => {
+                            // 第一列顯示桌次資訊，後續列留空只寫賓客，讓畫面乾淨
+                            if (index === 0) {
+                                data.push([table.name, table.capacity, currentCount, g.name, g.size, '']);
+                            } else {
+                                data.push(['', '', '', g.name, g.size, '']);
+                            }
+                        });
+                    }
+                    // 每桌結束加一條空行分隔
+                    data.push(['', '', '', '', '', '']);
+                });
+
+                // 加入總計行
+                data.push(['總計已入座人數', '', totalGuests, '', '', '']);
+
+                // 加入未安排的賓客
+                const unassignedGuests = window.appState.guests.filter(g => g.tableId === null);
+                if (unassignedGuests.length > 0) {
+                    data.push([]); // 空行區隔
+                    data.push(['【未安排座位區】', '', '', '', '', '']);
+                    unassignedGuests.forEach(g => {
+                        data.push(['', '', '', g.name, g.size, '等待安排']);
+                    });
+                }
+
+                // 產生活頁簿與工作表
+                const wb = XLSX.utils.book_new();
+                const ws = XLSX.utils.aoa_to_sheet(data);
+                
+                // 設定欄寬
+                ws['!cols'] = [
+                    { wch: 18 }, // 桌次名稱
+                    { wch: 10 }, // 桌次容量
+                    { wch: 10 }, // 目前人數
+                    { wch: 25 }, // 賓客/群組名稱
+                    { wch: 8 },  // 群組人數
+                    { wch: 15 }  // 備註
+                ];
+
+                // 試著合併第一行的大標題
+                if(!ws['!merges']) ws['!merges'] = [];
+                ws['!merges'].push({ s: { r: 0, c: 0 }, e: { r: 0, c: 5 } });
+
+                XLSX.utils.book_append_sheet(wb, ws, "座位表與桌卡明細");
+                XLSX.writeFile(wb, "喜宴午宴_座位表_桌卡明細.xlsx");
+                showToast("Excel 下載成功！");
+            } catch (error) {
+                console.error("匯出 Excel 失敗:", error);
+                showToast("匯出 Excel 失敗！");
+            }
+        };
+
+        // 啟動應用程式與綁定分隔線拖拉事件
+        window.addEventListener('DOMContentLoaded', () => {
+            const resizer = document.getElementById('resizer');
+            const sidebar = document.getElementById('left-sidebar');
+            
+            resizer.addEventListener('mousedown', function(e) {
+                isResizing = true;
+                document.body.style.cursor = 'col-resize';
+                document.body.style.userSelect = 'none'; // 避免選取文字
+                e.preventDefault();
+            });
+
+            document.addEventListener('mousemove', function(e) {
+                if (!isResizing) return;
+                
+                const containerOffsetLeft = sidebar.parentElement.getBoundingClientRect().left;
+                let newWidth = e.clientX - containerOffsetLeft - 10; 
+                
+                if (newWidth < 250) newWidth = 250; // 最小寬度限制
+                if (newWidth > window.innerWidth * 0.6) newWidth = window.innerWidth * 0.6; // 最大不超過畫面 60%
+                
+                sidebar.style.width = newWidth + 'px';
+            });
+
+            document.addEventListener('mouseup', function(e) {
+                if (isResizing) {
+                    isResizing = false;
+                    document.body.style.cursor = '';
+                    document.body.style.userSelect = '';
+                    lastSidebarWidth = sidebar.style.width; // 記憶最後寬度
+                }
+            });
+            
+            initApp();
+        });
+
+    </script>
+</body>
+</html>
