@@ -1,0 +1,499 @@
+<!DOCTYPE html>
+<html lang="zh-TW">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>婚禮座位安排系統 (雲端同步版)</title>
+    <!-- 引入 Tailwind CSS (快速排版) -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- 引入 SheetJS (Excel 匯入/匯出) -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/xlsx/0.18.5/xlsx.full.min.js"></script>
+    <!-- 引入 html2canvas (匯出圖片) -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+    
+    <style>
+        body { margin: 0; height: 100vh; display: flex; flex-direction: column; overflow: hidden; font-family: 'PingFang TC', 'Microsoft JhengHei', sans-serif; }
+        .header { background: #fff0f5; padding: 10px 20px; border-bottom: 2px solid #ffd1dc; display: flex; justify-content: space-between; align-items: center; box-shadow: 0 2px 5px rgba(0,0,0,0.05); z-index: 10; }
+        .main-container { display: flex; flex: 1; overflow: hidden; background: #fafafa; }
+        
+        /* 左側名單區 */
+        .sidebar { background: white; flex-shrink: 0; display: flex; flex-direction: column; border-right: 1px solid #ddd; overflow-y: auto; }
+        .accordion-header { cursor: pointer; background: #fdf2f8; padding: 12px; font-weight: bold; border-bottom: 1px solid #fbcfe8; display: flex; justify-content: space-between; align-items: center; }
+        .accordion-header:hover { background: #fce7f3; }
+        .accordion-content { padding: 15px; display: none; }
+        .accordion-content.active { display: block; }
+        
+        /* 分隔線拖拉 */
+        .resizer { width: 6px; background: #fbcfe8; cursor: col-resize; transition: background 0.2s; flex-shrink: 0; }
+        .resizer:hover, .resizer:active { background: #f472b6; }
+        
+        /* 右側座位區 */
+        .canvas-wrapper { flex: 1; overflow: auto; position: relative; }
+        #export-content {
+            position: relative;
+            width: 2200px;
+            height: 1200px;
+            background-color: #ffffff;
+            background-image: linear-gradient(#f0f0f0 1px, transparent 1px), linear-gradient(#f0f0f0 1px, transparent 1px);
+            background-size: 20px 20px;
+            transform-origin: top left;
+        }
+        
+        /* 場地視覺元素 */
+        .stage { position: absolute; left: 20px; top: 100px; width: 150px; height: 700px; background: #9ca3af; border: 2px solid #4b5563; border-radius: 8px; display: flex; align-items: center; justify-content: center; writing-mode: vertical-rl; font-size: 24px; font-weight: bold; color: white; letter-spacing: 5px; box-shadow: 4px 4px 10px rgba(0,0,0,0.2); }
+        .red-carpet { position: absolute; left: 170px; top: 400px; width: 1700px; height: 100px; background: #dc2626; border-top: 4px solid #991b1b; border-bottom: 4px solid #991b1b; box-shadow: 0 4px 10px rgba(0,0,0,0.15); }
+        
+        /* 圓桌樣式 */
+        .table-container { position: absolute; width: 140px; border-radius: 50%; display: flex; flex-direction: column; align-items: center; }
+        .round-table { width: 120px; height: 120px; border-radius: 50%; background: white; border: 4px solid #f472b6; display: flex; flex-direction: column; align-items: center; justify-content: center; box-shadow: 0 4px 6px rgba(0,0,0,0.1); z-index: 2; position: relative; }
+        .round-table.main-table { border-color: #dc2626; border-width: 6px; width: 140px; height: 140px; background: #fff1f2; }
+        .table-name { font-weight: bold; font-size: 16px; margin-bottom: 4px; text-align: center; }
+        .table-capacity { font-size: 12px; color: #666; }
+        .guest-list-box { width: 140px; min-height: 50px; background: rgba(255,255,255,0.9); border: 1px dashed #ccc; border-radius: 8px; margin-top: -10px; padding: 15px 5px 5px 5px; z-index: 1; box-shadow: 0 2px 4px rgba(0,0,0,0.05); }
+        
+        /* 賓客卡片 */
+        .guest-card { background: white; border: 1px solid #e5e7eb; padding: 8px; margin-bottom: 6px; border-radius: 6px; cursor: grab; box-shadow: 0 1px 3px rgba(0,0,0,0.1); display: flex; justify-content: space-between; align-items: center; font-size: 14px; }
+        .guest-card:active { cursor: grabbing; }
+        .guest-card .delete-btn { color: #ef4444; cursor: pointer; display: none; }
+        .guest-card:hover .delete-btn { display: block; }
+        
+        /* 彈出視窗 (Modal) */
+        .modal { display: none; position: fixed; inset: 0; background: rgba(0,0,0,0.5); align-items: center; justify-content: center; z-index: 50; }
+        .modal.active { display: flex; }
+        .modal-content { background: white; padding: 20px; border-radius: 8px; width: 400px; max-width: 90%; max-height: 80vh; overflow-y: auto; }
+        
+        /* 同步狀態提示 */
+        #sync-status { font-size: 12px; margin-left: 10px; padding: 4px 8px; border-radius: 12px; background: #d1fae5; color: #065f46; display: inline-block; transition: all 0.3s; }
+        #sync-status.syncing { background: #fef3c7; color: #92400e; }
+    </style>
+</head>
+<body>
+
+    <!-- 頂部導航與功能列 -->
+    <div class="header">
+        <div class="flex items-center gap-4">
+            <h1 class="text-xl font-bold text-pink-600">💖 婚禮座位安排系統</h1>
+            <span id="sync-status">🟢 雲端已連線</span>
+        </div>
+        <div class="flex gap-2">
+            <button onclick="document.getElementById('import-excel').click()" class="bg-green-500 text-white px-3 py-2 rounded shadow hover:bg-green-600 text-sm">📁 匯入名單</button>
+            <input type="file" id="import-excel" accept=".xlsx, .xls" style="display: none;" onchange="handleExcelImport(event)">
+            
+            <button onclick="exportToImage()" class="bg-pink-500 text-white px-3 py-2 rounded shadow hover:bg-pink-600 text-sm">📸 匯出座位圖</button>
+            <button onclick="exportToExcel()" class="bg-blue-500 text-white px-3 py-2 rounded shadow hover:bg-blue-600 text-sm">📊 匯出明細表</button>
+        </div>
+    </div>
+
+    <!-- 主要內容區 -->
+    <div class="main-container">
+        <!-- 左側名單區 -->
+        <div class="sidebar" id="sidebar" style="width: 300px;">
+            <!-- 新增面板 -->
+            <div class="accordion-header" onclick="toggleAccordion('add-panel')">
+                <span>➕ 手動新增</span>
+                <span id="add-panel-icon">▼</span>
+            </div>
+            <div class="accordion-content" id="add-panel">
+                <div class="mb-4 p-3 bg-gray-50 rounded border">
+                    <h3 class="font-bold mb-2 text-sm text-gray-700">新增賓客</h3>
+                    <input type="text" id="guest-name" placeholder="賓客名稱 (如: 陳小明一家)" class="border p-1 w-full mb-2 text-sm rounded">
+                    <input type="number" id="guest-count" placeholder="人數" value="1" min="1" class="border p-1 w-full mb-2 text-sm rounded">
+                    <button onclick="addGuest()" class="bg-pink-100 text-pink-700 w-full py-1 rounded text-sm hover:bg-pink-200">加入名單</button>
+                </div>
+            </div>
+
+            <!-- 未安排名單面板 -->
+            <div class="accordion-header" onclick="toggleAccordion('unassigned-panel')">
+                <span>📋 未安排座位 (<span id="unassigned-count" class="text-red-500 font-bold">0</span>)</span>
+                <span id="unassigned-panel-icon">▲</span>
+            </div>
+            <div class="accordion-content active" id="unassigned-panel" style="flex: 1; overflow-y: auto; background: #fdfbfb;">
+                <div id="unassigned-guests" class="min-h-[200px]" ondragover="allowDrop(event)" ondrop="drop(event, 'unassigned')">
+                    <!-- 未安排的賓客會出現在這 -->
+                </div>
+            </div>
+        </div>
+
+        <!-- 拖拉分隔線 -->
+        <div class="resizer" id="resizer"></div>
+
+        <!-- 右側座位圖區 -->
+        <div class="canvas-wrapper">
+            <div id="export-content">
+                <div class="stage">主舞台</div>
+                <div class="red-carpet"></div>
+                <div id="tables-container">
+                    <!-- 圓桌會由 JS 生成在這裡 -->
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- 匯入異常處理 Modal -->
+    <div class="modal" id="import-error-modal">
+        <div class="modal-content">
+            <h2 class="text-lg font-bold text-red-600 mb-2">⚠️ 部分資料無法自動辨識</h2>
+            <p class="text-sm text-gray-600 mb-4">以下資料找不到明確的「姓名」或「人數」，請手動確認並輸入，或直接忽略。</p>
+            <div id="error-list" class="space-y-3 mb-4 max-h-[300px] overflow-y-auto"></div>
+            <div class="flex justify-end gap-2">
+                <button onclick="closeErrorModal()" class="bg-gray-300 px-4 py-2 rounded text-sm hover:bg-gray-400">完成並關閉</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Firebase SDK (模組化) -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/10.5.0/firebase-app.js";
+        import { getFirestore, doc, setDoc, onSnapshot } from "https://www.gstatic.com/firebasejs/10.5.0/firebase-firestore.js";
+
+        // ==========================================
+        // 🔑 您的 Firebase 專屬設定碼 (請確認無誤)
+        // ==========================================
+        const firebaseConfig = {
+            apiKey: "AIzaSyCzc0HJ-C-ll5vxeSMiG4NACZst_s2PXVI",
+            authDomain: "our-wedding-seating.firebaseapp.com",
+            projectId: "our-wedding-seating",
+            storageBucket: "our-wedding-seating.firebasestorage.app",
+            messagingSenderId: "872740102921",
+            appId: "1:872740102921:web:59165e19734ee0028ce9d8"
+        };
+
+        const app = initializeApp(firebaseConfig);
+        const db = getFirestore(app);
+        const seatingDoc = doc(db, "wedding", "seatingData");
+
+        // 全域變數供其他 script 讀取
+        window.saveToCloud = async function(tablesData, unassignedData) {
+            const status = document.getElementById('sync-status');
+            status.textContent = "🔄 儲存中...";
+            status.className = "syncing";
+            
+            try {
+                // 標記本機正在更新，避免重複觸發
+                window.isLocalUpdating = true;
+                await setDoc(seatingDoc, {
+                    tables: tablesData,
+                    unassignedGuests: unassignedData,
+                    lastUpdate: new Date().toISOString()
+                });
+                setTimeout(() => {
+                    status.textContent = "🟢 雲端已連線";
+                    status.className = "";
+                    window.isLocalUpdating = false;
+                }, 500);
+            } catch (e) {
+                status.textContent = "🔴 儲存失敗";
+                console.error("儲存失敗", e);
+                window.isLocalUpdating = false;
+            }
+        };
+
+        // 監聽雲端資料改變 (即時同步)
+        onSnapshot(seatingDoc, (docSnap) => {
+            // 如果是自己剛剛推上去的更新，就不重新渲染畫面避免閃爍
+            if (window.isLocalUpdating) return;
+            
+            if (docSnap.exists()) {
+                const data = docSnap.data();
+                if(data.tables) window.tables = data.tables;
+                if(data.unassignedGuests) window.unassignedGuests = data.unassignedGuests;
+                window.renderAll();
+            }
+        });
+    </script>
+
+    <!-- 系統主邏輯 -->
+    <script>
+        // 初始化桌次座標 (還原場地圖 21桌配置)
+        // 上排: 2, 4, 6, 8, 10, 12, 14, 16, 18
+        // 下排: 3, 5, 7, 9, 11, 13, 15, 17, 19, 21
+        // 中間: 主桌(前), 20桌(紅毯尾)
+        const defaultTables = [
+            { id: 't_main', name: '主桌', capacity: 12, top: 400, left: 350, guests: [], isMain: true },
+            { id: 't_2', name: '第 2 桌', capacity: 10, top: 150, left: 450, guests: [] },
+            { id: 't_3', name: '第 3 桌', capacity: 10, top: 650, left: 450, guests: [] },
+            { id: 't_4', name: '第 4 桌', capacity: 10, top: 150, left: 620, guests: [] },
+            { id: 't_5', name: '第 5 桌', capacity: 10, top: 650, left: 620, guests: [] },
+            { id: 't_6', name: '第 6 桌', capacity: 10, top: 150, left: 790, guests: [] },
+            { id: 't_7', name: '第 7 桌', capacity: 10, top: 650, left: 790, guests: [] },
+            { id: 't_8', name: '第 8 桌', capacity: 10, top: 150, left: 960, guests: [] },
+            { id: 't_9', name: '第 9 桌', capacity: 10, top: 650, left: 960, guests: [] },
+            { id: 't_10', name: '第 10 桌', capacity: 10, top: 150, left: 1130, guests: [] },
+            { id: 't_11', name: '第 11 桌', capacity: 10, top: 650, left: 1130, guests: [] },
+            { id: 't_12', name: '第 12 桌', capacity: 10, top: 150, left: 1300, guests: [] },
+            { id: 't_13', name: '第 13 桌', capacity: 10, top: 650, left: 1300, guests: [] },
+            { id: 't_14', name: '第 14 桌', capacity: 10, top: 150, left: 1470, guests: [] },
+            { id: 't_15', name: '第 15 桌', capacity: 10, top: 650, left: 1470, guests: [] },
+            { id: 't_16', name: '第 16 桌', capacity: 10, top: 150, left: 1640, guests: [] },
+            { id: 't_17', name: '第 17 桌', capacity: 10, top: 650, left: 1640, guests: [] },
+            { id: 't_18', name: '第 18 桌', capacity: 10, top: 150, left: 1810, guests: [] },
+            { id: 't_19', name: '第 19 桌', capacity: 10, top: 650, left: 1810, guests: [] },
+            { id: 't_20', name: '第 20 桌', capacity: 10, top: 400, left: 1810, guests: [] },
+            { id: 't_21', name: '第 21 桌', capacity: 10, top: 650, left: 1980, guests: [] }
+        ];
+
+        window.tables = [...defaultTables];
+        window.unassignedGuests = [];
+        window.isLocalUpdating = false;
+
+        // 觸發雲端儲存
+        function triggerSync() {
+            if(window.saveToCloud) {
+                window.saveToCloud(window.tables, window.unassignedGuests);
+            }
+        }
+
+        // --- 渲染畫面功能 ---
+        window.renderAll = function() {
+            renderTables();
+            renderUnassigned();
+        }
+
+        function renderTables() {
+            const container = document.getElementById('tables-container');
+            container.innerHTML = '';
+            
+            window.tables.forEach(table => {
+                const currentCount = table.guests.reduce((sum, g) => sum + g.count, 0);
+                const isOver = currentCount > table.capacity;
+                const statusColor = isOver ? 'text-red-500 font-bold' : 'text-gray-600';
+                
+                let guestsHtml = table.guests.map(g => `
+                    <div class="guest-card" draggable="true" ondragstart="drag(event, '${g.id}')">
+                        <span>${g.name} (${g.count})</span>
+                    </div>
+                `).join('');
+
+                container.innerHTML += `
+                    <div class="table-container" style="top: ${table.top}px; left: ${table.left}px;" ondragover="allowDrop(event)" ondrop="drop(event, '${table.id}')">
+                        <div class="round-table ${table.isMain ? 'main-table' : ''}">
+                            <div class="table-name">${table.name}</div>
+                            <div class="table-capacity ${statusColor}">${currentCount} / ${table.capacity} 人</div>
+                        </div>
+                        <div class="guest-list-box">
+                            ${guestsHtml}
+                        </div>
+                    </div>
+                `;
+            });
+        }
+
+        function renderUnassigned() {
+            const container = document.getElementById('unassigned-guests');
+            container.innerHTML = '';
+            let totalUnassigned = 0;
+            
+            window.unassignedGuests.forEach(g => {
+                totalUnassigned += g.count;
+                container.innerHTML += `
+                    <div class="guest-card" draggable="true" ondragstart="drag(event, '${g.id}')">
+                        <span>${g.name} (${g.count}人)</span>
+                        <span class="delete-btn" onclick="deleteGuest('${g.id}')">❌</span>
+                    </div>
+                `;
+            });
+            document.getElementById('unassigned-count').innerText = totalUnassigned;
+        }
+
+        // --- 拖拉互動邏輯 ---
+        function allowDrop(ev) { ev.preventDefault(); }
+        function drag(ev, guestId) { ev.dataTransfer.setData("guestId", guestId); }
+        function drop(ev, targetTableId) {
+            ev.preventDefault();
+            const guestId = ev.dataTransfer.getData("guestId");
+            
+            let guest = null;
+            window.unassignedGuests = window.unassignedGuests.filter(g => {
+                if (g.id === guestId) { guest = g; return false; }
+                return true;
+            });
+            window.tables.forEach(t => {
+                t.guests = t.guests.filter(g => {
+                    if (g.id === guestId) { guest = g; return false; }
+                    return true;
+                });
+            });
+
+            if (guest) {
+                if (targetTableId === 'unassigned') {
+                    window.unassignedGuests.push(guest);
+                } else {
+                    const table = window.tables.find(t => t.id === targetTableId);
+                    if (table) table.guests.push(guest);
+                }
+            }
+            window.renderAll();
+            triggerSync(); // 拖拉完成後儲存
+        }
+
+        // --- 新增與刪除 ---
+        function addGuest() {
+            const name = document.getElementById('guest-name').value.trim();
+            const count = parseInt(document.getElementById('guest-count').value);
+            if (!name || isNaN(count) || count < 1) return alert("請輸入正確的名稱與人數！");
+            
+            window.unassignedGuests.push({ id: 'g_' + Date.now(), name, count });
+            document.getElementById('guest-name').value = '';
+            document.getElementById('guest-count').value = '1';
+            
+            window.renderAll();
+            triggerSync();
+        }
+
+        function deleteGuest(guestId) {
+            window.unassignedGuests = window.unassignedGuests.filter(g => g.id !== guestId);
+            window.renderAll();
+            triggerSync();
+        }
+
+        // --- 匯入 Excel ---
+        function handleExcelImport(event) {
+            const file = event.target.files[0];
+            if (!file) return;
+
+            const reader = new FileReader();
+            reader.onload = function(e) {
+                const data = new Uint8Array(e.target.result);
+                const workbook = XLSX.read(data, {type: 'array'});
+                const firstSheetName = workbook.SheetNames[0];
+                const worksheet = workbook.Sheets[firstSheetName];
+                const json = XLSX.utils.sheet_to_json(worksheet, {defval: ""});
+                
+                let errors = [];
+                json.forEach(row => {
+                    const strRow = JSON.stringify(row);
+                    if(strRow.includes("不參加") || strRow.includes("無法出席")) return;
+
+                    let name = row["姓名"] || row["名字"] || row["賓客姓名"] || row["Name"];
+                    let countStr = row["人數"] || row["幾位"] || row["參加人數"] || row["Count"];
+                    let count = parseInt(countStr);
+
+                    if (name && !isNaN(count) && count > 0) {
+                        window.unassignedGuests.push({ id: 'g_' + Math.random().toString(36).substr(2, 9), name: name, count: count });
+                    } else {
+                        errors.push(row);
+                    }
+                });
+
+                window.renderAll();
+                triggerSync();
+                
+                if (errors.length > 0) {
+                    showErrorModal(errors);
+                } else {
+                    alert("名單匯入成功！");
+                }
+                event.target.value = ''; 
+            };
+            reader.readAsArrayBuffer(file);
+        }
+
+        // --- 錯誤處理 Modal ---
+        function showErrorModal(errors) {
+            const list = document.getElementById('error-list');
+            list.innerHTML = '';
+            errors.forEach((err, index) => {
+                const rawData = JSON.stringify(err).replace(/["{}]/g, '').replace(/:/g, ': ');
+                list.innerHTML += `
+                    <div class="p-3 border rounded bg-gray-50 flex flex-col gap-2" id="err-row-${index}">
+                        <div class="text-xs text-gray-500 break-all">${rawData}</div>
+                        <div class="flex gap-2">
+                            <input type="text" id="err-name-${index}" placeholder="手動輸入姓名" class="border p-1 text-sm flex-1">
+                            <input type="number" id="err-count-${index}" placeholder="人數" value="1" min="1" class="border p-1 w-16 text-sm">
+                            <button onclick="fixError(${index})" class="bg-pink-500 text-white px-2 rounded text-sm hover:bg-pink-600">加入</button>
+                        </div>
+                    </div>
+                `;
+            });
+            document.getElementById('import-error-modal').classList.add('active');
+        }
+
+        function fixError(index) {
+            const name = document.getElementById(`err-name-${index}`).value.trim();
+            const count = parseInt(document.getElementById(`err-count-${index}`).value);
+            if (name && !isNaN(count) && count > 0) {
+                window.unassignedGuests.push({ id: 'g_' + Date.now(), name, count });
+                document.getElementById(`err-row-${index}`).remove();
+                window.renderAll();
+                triggerSync();
+            } else {
+                alert("請輸入正確姓名與人數");
+            }
+        }
+
+        function closeErrorModal() {
+            document.getElementById('import-error-modal').classList.remove('active');
+        }
+
+        // --- 匯出功能 ---
+        function exportToImage() {
+            const element = document.getElementById('export-content');
+            html2canvas(element, {
+                width: element.scrollWidth,
+                height: element.scrollHeight,
+                windowWidth: element.scrollWidth,
+                windowHeight: element.scrollHeight,
+                scale: 1.5,
+                useCORS: true
+            }).then(canvas => {
+                const link = document.createElement('a');
+                link.download = '座位表截圖.png';
+                link.href = canvas.toDataURL();
+                link.click();
+            });
+        }
+
+        function exportToExcel() {
+            let exportData = [];
+            window.tables.forEach(t => {
+                const totalCount = t.guests.reduce((sum, g) => sum + g.count, 0);
+                exportData.push({ "桌號/名稱": t.name, "桌次總人數": totalCount + " / " + t.capacity, "賓客姓名": "", "該組人數": "", "備註": "" });
+                t.guests.forEach(g => {
+                    exportData.push({ "桌號/名稱": "", "桌次總人數": "", "賓客姓名": g.name, "該組人數": g.count, "備註": "" });
+                });
+                exportData.push({ "桌號/名稱": "", "桌次總人數": "", "賓客姓名": "", "該組人數": "", "備註": "----------------" });
+            });
+            const ws = XLSX.utils.json_to_sheet(exportData);
+            const wb = XLSX.utils.book_new();
+            XLSX.utils.book_append_sheet(wb, ws, "桌卡明細");
+            XLSX.writeFile(wb, "桌卡與座位明細.xlsx");
+        }
+
+        // --- UI 輔助功能 ---
+        function toggleAccordion(id) {
+            const content = document.getElementById(id);
+            const icon = document.getElementById(id + '-icon');
+            if (content.classList.contains('active')) {
+                content.classList.remove('active');
+                icon.innerText = '▼';
+            } else {
+                content.classList.add('active');
+                icon.innerText = '▲';
+            }
+        }
+
+        // 分隔線拖拉邏輯
+        const resizer = document.getElementById('resizer');
+        const sidebar = document.getElementById('sidebar');
+        let isResizing = false;
+
+        resizer.addEventListener('mousedown', (e) => {
+            isResizing = true;
+            document.body.style.cursor = 'col-resize';
+            e.preventDefault();
+        });
+        document.addEventListener('mousemove', (e) => {
+            if (!isResizing) return;
+            const newWidth = e.clientX;
+            if (newWidth > 200 && newWidth < 600) sidebar.style.width = newWidth + 'px';
+        });
+        document.addEventListener('mouseup', () => {
+            isResizing = false;
+            document.body.style.cursor = 'default';
+        });
+
+        // 初始渲染
+        window.renderAll();
+    </script>
+</body>
+</html>
